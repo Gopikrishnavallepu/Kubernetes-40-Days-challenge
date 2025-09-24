@@ -1,0 +1,19 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx
+  labels:
+    tier: backend # Added this label for the Deployment
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: v1 # Ensure this matches the template label
+  template:
+    metadata:
+      labels:
+        app: v1 # Added this label for the Pods
+    spec:
+      containers:
+      - image: nginx:1.23.0
+        name: nginx

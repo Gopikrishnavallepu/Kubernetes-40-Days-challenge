@@ -1,0 +1,14 @@
+# A multi-node kind cluster configuration
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: cka-cluster2
+nodes:
+- role: control-plane
+  # This is for the Kubernetes v1.30 node image
+  image: kindest/node:v1.30.0
+- role: worker
+  image: kindest/node:v1.30.0
+- role: worker
+  image: kindest/node:v1.30.0
+- role: worker
+  image: kindest/node:v1.30.0

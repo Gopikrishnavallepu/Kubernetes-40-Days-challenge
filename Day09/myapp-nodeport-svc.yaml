@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-nodeport-service
+spec:
+  # Selects the Pods with the label 'app: nginx'
+  selector:
+    app: nginx
+  # NodePort type exposes the Service on a port across all nodes
+  type: NodePort
+  ports:
+    - protocol: TCP
+      # The port the service itself is listening on (optional, defaults to targetPort)
+      port: 80
+      # The port the container is listening on (must match containerPort: 80 above)
+      targetPort: 80
+      # The port on the worker node to expose the service (optional, Kubernetes assigns a port between 30000-32767 if omitted)
+      nodePort: 30080
