@@ -189,7 +189,86 @@ spec:
 
 And that's it! These simple exercises are a great way to understand the core concepts of Kubernetes Pods and how to manage them using both imperative and declarative methods.
 
+Ah! I see — you **edited a Pod YAML live in the cluster** (using `kubectl edit pod`) and now want to **reflect those changes back into your original YAML file**. Let me explain clearly.
+
+---
+
+## 🔹 Understanding the Situation
+
+1. **`kubectl edit pod <pod-name>`**
+
+   * Opens the Pod manifest from the **live cluster** in your editor.
+   * Any changes you save **apply directly to the cluster**.
+   * **Does NOT update your original local YAML file**.
+
+2. **Why?**
+
+   * Kubernetes stores resources in its **API server**, not your local files.
+   * Editing in-cluster modifies the live object; your YAML on disk is **still the old version**.
+
+---
+
+## 🔹 How to Update Your Original YAML
+
+### 1️⃣ Export the current live YAML from the cluster
+
+```bash
+kubectl get pod <pod-name> -o yaml > pod.yaml
+```
+
+* This **overwrites** or creates a file `pod.yaml` with the **current live state** of the Pod.
+* Now your local YAML reflects **all live changes**, including edits made via `kubectl edit`.
+
+---
+
+### 2️⃣ Optional: Merge with original YAML
+
+If you want to **preserve some original comments/structure**:
+
+```bash
+kubectl get pod <pod-name> -o yaml > pod-live.yaml
+# Then manually diff & merge with your original YAML
+diff pod.yaml pod-live.yaml
+```
+
+* Use `vimdiff` or VS Code to **merge changes**.
+
+---
+
+### 3️⃣ Best Practices
+
+* Avoid live edits in production — instead:
+
+  1. Edit **local YAML**.
+  2. Apply with:
+
+     ```bash
+     kubectl apply -f pod.yaml
+     ```
+* If you **must edit live**, always **export afterward** to keep your YAML up-to-date.
+
+---
+
+### 4️⃣ Interview Explanation
+
+If asked:
+
+> *“You edited a pod live. How do you update the YAML file?”*
+
+You can answer:
+
+> “`kubectl edit` modifies the live cluster only. To reflect changes back, I use `kubectl get pod <pod-name> -o yaml > pod.yaml` to export the current live state into my original YAML. This keeps my files version-controlled and consistent with the cluster.”
+
+---
+
+If you want, I can also show a **quick trick to auto-sync live cluster YAML to your local folder** for multiple resources, so you never lose changes made live.
+
+Do you want me to show that?
+
+
+
 ***
+
 
 ### References
 
@@ -198,3 +277,663 @@ And that's it! These simple exercises are a great way to understand the core con
 *   "Day 7/40 - Pod In Kubernetes Explained | Imperative VS Declarative Way | YAML Tutorial" - Tech Tutorials with Piyush
 *   "Day 8/40 - Kubernetes Deployment, Replication Controller and ReplicaSet Explained" - Tech Tutorials with Piyush
 *   "FREE Kubernetes Full Course (Day 0/40) | Certified Kubernetes Administrator (CKA) Tutorial + Roadmap" - Tech Tutorials with Piyush
+
+Perfect 🚀 — here’s a **`kubectl explain` Cheat Sheet** you can use in **interviews and real-time**.
+This shows how to explore **common Kubernetes objects** step by step.
+
+---
+
+# 📝 `kubectl explain` Cheat Sheet
+
+| Resource                        | Command                                             | Why Useful                                       |
+| ------------------------------- | --------------------------------------------------- | ------------------------------------------------ |
+| **Pod**                         | `kubectl explain pod`                               | Top-level description of Pod object.             |
+|                                 | `kubectl explain pod.spec`                          | Explore spec fields (containers, volumes, etc.). |
+|                                 | `kubectl explain pod.spec.containers`               | Shows container settings (image, ports, probes). |
+|                                 | `kubectl explain pod.spec.containers.livenessProbe` | Learn readiness/liveness probe fields.           |
+|                                 | `kubectl explain pod.spec.affinity`                 | Discover node/pod affinity rules.                |
+| **Deployment**                  | `kubectl explain deployment`                        | Learn about Deployment resource (apps/v1).       |
+|                                 | `kubectl explain deployment.spec`                   | Fields like replicas, selector, template.        |
+|                                 | `kubectl explain deployment.spec.strategy`          | Shows RollingUpdate/Recreate strategies.         |
+| **Service**                     | `kubectl explain service`                           | Understand ClusterIP/NodePort/LoadBalancer.      |
+|                                 | `kubectl explain service.spec`                      | Explore ports, selectors, type fields.           |
+|                                 | `kubectl explain service.spec.ports`                | See port/protocol/targetPort details.            |
+| **Ingress**                     | `kubectl explain ingress`                           | Shows networking.k8s.io/v1 API group.            |
+|                                 | `kubectl explain ingress.spec`                      | Rules, TLS, backend configs.                     |
+|                                 | `kubectl explain ingress.spec.rules.http.paths`     | Path-based routing details.                      |
+| **ConfigMap**                   | `kubectl explain configmap`                         | Understand ConfigMap structure.                  |
+|                                 | `kubectl explain configmap.data`                    | How key-value pairs are stored.                  |
+| **Secret**                      | `kubectl explain secret`                            | Shows Secret structure.                          |
+|                                 | `kubectl explain secret.data`                       | Base64 encoded key-value pairs.                  |
+| **PersistentVolumeClaim (PVC)** | `kubectl explain pvc`                               | Learn about PVC definition.                      |
+|                                 | `kubectl explain pvc.spec.resources`                | Request/limit storage details.                   |
+|                                 | `kubectl explain pvc.spec.accessModes`              | Shows ReadWriteOnce, ReadOnlyMany, etc.          |
+| **Node**                        | `kubectl explain node`                              | Understand Node API fields.                      |
+|                                 | `kubectl explain node.status`                       | Status conditions, capacity, addresses.          |
+
+---
+
+# 🔹 Pro Tips (Interview-Worthy)
+
+* Use `--recursive` to see all fields in one shot:
+
+  ```bash
+  kubectl explain pod.spec --recursive
+  ```
+* Use it as a **YAML reference** when writing manifests without docs.
+* Always mention:
+  **“kubectl explain queries the live API server, so it’s always version-accurate to my cluster.”**
+
+---
+
+⚡ This shows interviewers you can **self-document Kubernetes** without relying on Google.
+
+👉 Do you want me to also prepare **real-world YAML writing + kubectl explain mapping** (like Pod with probes, Deployment with strategy, Service with multiple ports) so you can demonstrate both theory + practice?
+
+Great question 👍 — in **Kubernetes** you’ll often need to check **how many Pods are running on a worker node** and also see their **containers at that time**.
+
+Here’s how you can do it 👇
+
+---
+
+# 🔹 1. List Pods by Node (to see which worker node they are on)
+
+```bash
+kubectl get pods -o wide
+```
+
+👉 Output:
+
+```
+NAME                          READY   STATUS    RESTARTS   AGE   IP          NODE
+nginx-deployment-6d4cf56db6   1/1     Running   0          20m   10.244.0.5  worker-node1
+myapp-7d89f4c9b7              2/2     Running   1          10m   10.244.1.8  worker-node2
+```
+
+* `NODE` column shows which worker node the pod is running on.
+* `READY` shows containers inside (e.g., `2/2` = 2 containers running).
+
+---
+
+# 🔹 2. Count Pods per Worker Node
+
+```bash
+kubectl get pods -o wide --all-namespaces | awk '{print $8}' | sort | uniq -c
+```
+
+👉 Output:
+
+```
+5 worker-node1
+3 worker-node2
+2 control-plane
+```
+
+This means:
+
+* 5 Pods on worker-node1
+* 3 Pods on worker-node2
+* 2 Pods on control-plane
+
+---
+
+# 🔹 3. Check Containers in Each Pod
+
+```bash
+kubectl describe pod <pod-name> -n <namespace>
+```
+
+* Shows all containers running inside the Pod.
+* Example fields:
+
+  ```
+  Containers:
+    app-container:
+      Image: nginx:1.21
+      State: Running
+    sidecar:
+      Image: busybox
+      State: Running
+  ```
+
+---
+
+# 🔹 4. Directly Check Node for Pods/Containers (with crictl or docker/podman)
+
+If you SSH into a **worker node**:
+
+* For containerd runtime:
+
+  ```bash
+  crictl ps
+  ```
+* For Docker runtime:
+
+  ```bash
+  docker ps
+  ```
+
+This shows all running containers inside that node.
+
+---
+
+# 🔹 5. Watch Pods in Real Time
+
+```bash
+kubectl get pods -o wide -w
+```
+
+This continuously shows Pods starting/stopping and where they are scheduled.
+
+---
+
+✅ **Interview Tip**
+If asked: *“How do you check what’s running on worker nodes?”*
+You can say:
+
+* “I use `kubectl get pods -o wide` to see Pod-to-Node mapping.”
+* “To check container details, I use `kubectl describe pod`.”
+* “If I need to go deeper inside the node, I use `crictl ps` or `docker ps` depending on runtime.”
+
+---
+
+👉 Do you want me to also give you a **one-liner script/command** that directly shows *Pods + Containers grouped by worker node* (so you can use it in real troubleshooting)?
+Perfect 🔥 — in real troubleshooting, you want **a single one-liner** that gives you **Pods + Containers grouped by Worker Node** without manual counting. Here are ready-to-use commands:
+
+---
+
+## ✅ One-liner: Pods per Worker Node
+
+```bash
+kubectl get pods -A -o wide --no-headers | awk '{print $8}' | sort | uniq -c
+```
+
+🔹 Output Example:
+
+```
+  5 worker-1
+  3 worker-2
+  7 master
+```
+
+* `5` = Number of pods running on `worker-1`.
+* `3` = Pods on `worker-2`.
+* `7` = Pods on control-plane/master node.
+
+---
+
+## ✅ One-liner: Pods + Containers per Worker Node
+
+```bash
+kubectl get pods -A -o json | jq -r '.items[] | "\(.spec.nodeName) \(.spec.containers | length)"' \
+ | awk '{pods[$1]++; containers[$1]+=$2} END {for (n in pods) print n, "Pods="pods[n], "Containers="containers[n]}'
+```
+
+🔹 Output Example:
+
+```
+worker-1 Pods=5 Containers=8
+worker-2 Pods=3 Containers=5
+master   Pods=7 Containers=10
+```
+
+* `Pods=5` → total pods scheduled.
+* `Containers=8` → total containers across those pods.
+
+---
+
+## ✅ Bonus (Quick Check via Node Describe)
+
+```bash
+kubectl describe node worker-1 | grep "Non-terminated Pods"
+```
+
+Example:
+
+```
+Non-terminated Pods:  15 (10 running, 5 pending)
+```
+
+---
+
+⚡ **Interview Pro Tip**:
+If asked *“How would you quickly know pods & containers per worker node?”*
+You can say:
+
+> “I use a JSONPath + jq one-liner that summarizes pods and container counts per node. For example, it will show `worker-1 Pods=5 Containers=8`. This is super useful in real troubleshooting when checking workload distribution.”
+
+---
+
+Do you want me to also give you a **Bash script version** (with colors + formatted output) that you can keep handy in your toolbox for interviews/demos?
+
+Perfect! 🚀 Let’s extend the previous script to also include **CPU & Memory usage per node** along with **Pods & Containers counts**.
+This will act like a **mini monitoring summary** without needing Prometheus.
+
+---
+
+## 🔹 Script: `node-workload-summary.sh`
+
+```bash
+#!/bin/bash
+# Script: node-workload-summary.sh
+# Shows Pods, Containers, CPU & Memory usage per Kubernetes Node
+# Requires metrics-server to be installed in cluster
+
+echo -e "\033[1;34m=== Node Workload Summary ===\033[0m"
+
+# Get Pod & Container counts per node
+declare -A pod_count
+declare -A container_count
+
+kubectl get pods -A -o json | jq -r '
+  .items[] | "\(.spec.nodeName) \(.spec.containers | length)"' \
+| awk '{pods[$1]++; containers[$1]+=$2} END {for (n in pods) print n, pods[n], containers[n]}' \
+> /tmp/node_pods_containers.txt
+
+# Get CPU & Memory usage from kubectl top nodes
+kubectl top nodes --no-headers | awk '{print $1, $2, $3}' > /tmp/node_resources.txt
+
+# Print summary
+printf "\n%-20s %-10s %-12s %-12s %-12s\n" "NODE" "PODS" "CONTAINERS" "CPU(cores)" "MEMORY"
+echo "---------------------------------------------------------------"
+
+while read -r line; do
+    node=$(echo $line | awk '{print $1}')
+    pods=$(echo $line | awk '{print $2}')
+    containers=$(echo $line | awk '{print $3}')
+    # Match CPU/Memory usage
+    cpu=$(grep "^$node" /tmp/node_resources.txt | awk '{print $2}')
+    mem=$(grep "^$node" /tmp/node_resources.txt | awk '{print $3}')
+    printf "\033[1;32m%-20s %-10s %-12s %-12s %-12s\033[0m\n" "$node" "$pods" "$containers" "$cpu" "$mem"
+done < /tmp/node_pods_containers.txt
+```
+
+---
+
+## 🔹 Usage
+
+1. Save script:
+
+```bash
+nano node-workload-summary.sh
+```
+
+(Paste the code above)
+
+2. Make executable:
+
+```bash
+chmod +x node-workload-summary.sh
+```
+
+3. Run it:
+
+```bash
+./node-workload-summary.sh
+```
+
+---
+
+## 🔹 Sample Output
+
+```
+=== Node Workload Summary ===
+
+NODE                 PODS       CONTAINERS   CPU(cores)   MEMORY      
+---------------------------------------------------------------
+worker-1             7          10           500m         1024Mi
+worker-2             4          6            300m         512Mi
+master               5          7            400m         768Mi
+```
+
+---
+
+## 🔹 Interview Tip
+
+* Shows **real-time Pods + Containers + CPU & Memory usage** per node.
+* Demonstrates your **hands-on cluster monitoring skills** without external tools.
+* You can say:
+
+> “I can quickly summarize node workloads and resource usage with a small script using `kubectl get pods`, `kubectl top nodes`, and `jq` — helpful during troubleshooting and capacity planning.”
+
+---
+
+If you want, I can **also extend this script to show Pods per Namespace per Node**, so it becomes a **full mini cluster overview tool** for interviews or demo purposes.
+
+Do you want me to do that next?
+Perfect! 🚀 Let’s extend the script to show a **full cluster overview** including:
+
+* Pods **per node**
+* Containers per pod
+* CPU & Memory usage per node
+* Pods **per namespace per node**
+
+This gives a **comprehensive snapshot** of cluster workload — very interview/demo-friendly.
+
+---
+
+## 🔹 Script: `cluster-overview.sh`
+
+```bash
+#!/bin/bash
+# Script: cluster-overview.sh
+# Shows Node summary with Pods, Containers, CPU/Memory, and Pods per Namespace
+
+echo -e "\033[1;34m=== Kubernetes Cluster Overview ===\033[0m"
+
+# Temporary files
+POD_CONTAINER_FILE=/tmp/node_pods_containers.txt
+NODE_RES_FILE=/tmp/node_resources.txt
+POD_NS_FILE=/tmp/node_pods_namespace.txt
+
+# 1️⃣ Pods & Containers per Node
+kubectl get pods -A -o json | jq -r '.items[] | "\(.spec.nodeName) \(.spec.containers | length) \(.metadata.namespace)"' \
+| awk '{pods[$1]++; containers[$1]+=$2; ns[$1,$3]++} END {
+    for (n in pods) print n, pods[n], containers[n];
+}' > $POD_CONTAINER_FILE
+
+# 2️⃣ CPU & Memory per Node
+kubectl top nodes --no-headers | awk '{print $1, $2, $3}' > $NODE_RES_FILE
+
+# 3️⃣ Pods per Namespace per Node
+kubectl get pods -A -o json | jq -r '.items[] | "\(.spec.nodeName) \(.metadata.namespace)"' \
+| sort | uniq -c > $POD_NS_FILE
+
+# 4️⃣ Print Node Summary
+printf "\n%-20s %-10s %-12s %-12s %-12s\n" "NODE" "PODS" "CONTAINERS" "CPU(cores)" "MEMORY"
+echo "---------------------------------------------------------------"
+
+while read -r line; do
+    node=$(echo $line | awk '{print $1}')
+    pods=$(echo $line | awk '{print $2}')
+    containers=$(echo $line | awk '{print $3}')
+    cpu=$(grep "^$node" $NODE_RES_FILE | awk '{print $2}')
+    mem=$(grep "^$node" $NODE_RES_FILE | awk '{print $3}')
+    printf "\033[1;32m%-20s %-10s %-12s %-12s %-12s\033[0m\n" "$node" "$pods" "$containers" "$cpu" "$mem"
+done < $POD_CONTAINER_FILE
+
+# 5️⃣ Print Pods per Namespace per Node
+echo -e "\n\033[1;34m=== Pods per Namespace per Node ===\033[0m"
+awk '{count[$2,$3]=$1} END {for (k in count) {split(k,a,SUBSEP); printf "%-20s %-20s %s\n", a[1], a[2], count[k]}}' $POD_NS_FILE
+```
+
+---
+
+## 🔹 Usage
+
+1. Save script:
+
+```bash
+nano cluster-overview.sh
+```
+
+(Paste code above)
+
+2. Make it executable:
+
+```bash
+chmod +x cluster-overview.sh
+```
+
+3. Run it:
+
+```bash
+./cluster-overview.sh
+```
+
+---
+
+## 🔹 Sample Output
+
+```
+=== Kubernetes Cluster Overview ===
+
+NODE                 PODS       CONTAINERS   CPU(cores)   MEMORY
+---------------------------------------------------------------
+worker-1             7          10           500m         1024Mi
+worker-2             4          6            300m         512Mi
+master               5          7            400m         768Mi
+
+=== Pods per Namespace per Node ===
+worker-1             default              5
+worker-1             kube-system          2
+worker-2             default              3
+worker-2             kube-system          1
+master               kube-system          5
+```
+
+---
+
+### 🔹 Interview Tip
+
+* Demonstrates **hands-on Kubernetes cluster monitoring**.
+* Shows **pods distribution per node**, **containers**, **resource usage**, and **namespace-level visibility**.
+* You can confidently say:
+
+> “I can quickly assess node workloads, container counts, CPU/Memory usage, and pod distribution per namespace using a single script without installing extra tools.”
+
+---
+
+If you want, I can **also add live updates (`watch` style)** to this script so it **auto-refreshes every 5 seconds**, which is very handy for **real-time cluster monitoring** during demos or troubleshooting.
+
+Do you want me to do that next?
+Perfect! 🚀 Let’s enhance the script to **auto-refresh every few seconds**, giving you a **real-time cluster monitoring dashboard** directly in the terminal.
+
+---
+
+## 🔹 Script: `cluster-overview-live.sh`
+
+```bash
+#!/bin/bash
+# Script: cluster-overview-live.sh
+# Real-time Kubernetes Cluster Overview (Pods, Containers, CPU/Memory, Pods per Namespace)
+# Auto-refreshes every 5 seconds
+# Requires metrics-server installed
+
+INTERVAL=5  # refresh interval in seconds
+
+while true; do
+    clear
+    echo -e "\033[1;34m=== Kubernetes Cluster Live Overview ===\033[0m"
+    echo "Updated: $(date)"
+    
+    # Temporary files
+    POD_CONTAINER_FILE=$(mktemp)
+    NODE_RES_FILE=$(mktemp)
+    POD_NS_FILE=$(mktemp)
+    
+    # Pods & Containers per Node
+    kubectl get pods -A -o json | jq -r '.items[] | "\(.spec.nodeName) \(.spec.containers | length) \(.metadata.namespace)"' \
+    | awk '{pods[$1]++; containers[$1]+=$2; ns[$1,$3]++} END {for (n in pods) print n, pods[n], containers[n]}' > $POD_CONTAINER_FILE
+
+    # CPU & Memory per Node
+    kubectl top nodes --no-headers | awk '{print $1, $2, $3}' > $NODE_RES_FILE
+
+    # Pods per Namespace per Node
+    kubectl get pods -A -o json | jq -r '.items[] | "\(.spec.nodeName) \(.metadata.namespace)"' | sort | uniq -c > $POD_NS_FILE
+
+    # Print Node Summary
+    printf "\n%-20s %-10s %-12s %-12s %-12s\n" "NODE" "PODS" "CONTAINERS" "CPU(cores)" "MEMORY"
+    echo "---------------------------------------------------------------"
+    while read -r line; do
+        node=$(echo $line | awk '{print $1}')
+        pods=$(echo $line | awk '{print $2}')
+        containers=$(echo $line | awk '{print $3}')
+        cpu=$(grep "^$node" $NODE_RES_FILE | awk '{print $2}')
+        mem=$(grep "^$node" $NODE_RES_FILE | awk '{print $3}')
+        printf "\033[1;32m%-20s %-10s %-12s %-12s %-12s\033[0m\n" "$node" "$pods" "$containers" "$cpu" "$mem"
+    done < $POD_CONTAINER_FILE
+
+    # Print Pods per Namespace per Node
+    echo -e "\n\033[1;34m=== Pods per Namespace per Node ===\033[0m"
+    awk '{count[$2,$3]=$1} END {for (k in count) {split(k,a,SUBSEP); printf "%-20s %-20s %s\n", a[1], a[2], count[k]}}' $POD_NS_FILE
+
+    # Wait before refreshing
+    sleep $INTERVAL
+done
+```
+
+---
+
+## 🔹 Usage
+
+1. Save the script:
+
+```bash
+nano cluster-overview-live.sh
+```
+
+2. Make executable:
+
+```bash
+chmod +x cluster-overview-live.sh
+```
+
+3. Run it:
+
+```bash
+./cluster-overview-live.sh
+```
+
+* The output **refreshes every 5 seconds**.
+* Shows **Pods, Containers, CPU & Memory**, and **Pods per Namespace per Node** live.
+
+---
+
+## 🔹 Sample Output (auto-refreshing)
+
+```
+=== Kubernetes Cluster Live Overview ===
+Updated: Tue Sep 24 20:30:05 IST 2025
+
+NODE                 PODS       CONTAINERS   CPU(cores)   MEMORY
+---------------------------------------------------------------
+worker-1             7          10           500m         1024Mi
+worker-2             4          6            300m         512Mi
+master               5          7            400m         768Mi
+
+=== Pods per Namespace per Node ===
+worker-1             default              5
+worker-1             kube-system          2
+worker-2             default              3
+worker-2             kube-system          1
+master               kube-system          5
+```
+
+---
+
+### 🔹 Interview Tip
+
+* Shows **real-time monitoring skills** without Prometheus/Grafana.
+* You can say:
+
+> “I can continuously monitor pods, containers, node CPU/memory, and namespace distribution using a simple script with `kubectl` and `jq`, which is handy for troubleshooting and capacity planning.”
+
+---
+
+If you want, I can **also make a version with color-coded alerts** (e.g., highlight nodes with CPU > 80% or pods pending) — this looks **super impressive in interviews**.
+
+Ah! I see exactly what’s happening — let me break it down and give you a **step-by-step fix**.
+
+Your errors:
+
+1. `./cluster-overview-live.sh: line 20: jq: command not found`
+2. `error: Metrics API not available`
+
+---
+
+## 🔹 Problem 1: `jq: command not found`
+
+* The script uses `jq` to parse JSON from `kubectl get pods -o json`.
+* `jq` is **not installed** on your system.
+
+### ✅ Solution:
+
+* Install `jq` depending on your OS:
+
+**Ubuntu / Debian:**
+
+```bash
+sudo apt update
+sudo apt install -y jq
+```
+
+**CentOS / RHEL / Fedora:**
+
+```bash
+sudo yum install -y epel-release
+sudo yum install -y jq
+```
+
+**MacOS (Homebrew):**
+
+```bash
+brew install jq
+```
+
+* After installing, run:
+
+```bash
+jq --version
+```
+
+* Then rerun your script.
+
+---
+
+## 🔹 Problem 2: `Metrics API not available`
+
+* The script uses `kubectl top nodes` to get CPU/Memory usage.
+* This requires **metrics-server** installed in your cluster.
+
+### ✅ Solution:
+
+1. Check if metrics-server is installed:
+
+```bash
+kubectl get deployment metrics-server -n kube-system
+```
+
+* If it shows `NotFound`, install it.
+
+2. Install metrics-server (example):
+
+```bash
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+```
+
+3. Wait a minute and test:
+
+```bash
+kubectl top nodes
+kubectl top pods
+```
+
+* Now CPU & Memory usage should be visible.
+
+---
+
+## 🔹 Quick Fix if You Just Want Pod + Container Count
+
+* If you **don’t care about CPU/Memory yet**, you can **comment out the `kubectl top nodes` part** in the script:
+
+```bash
+# kubectl top nodes --no-headers | awk '{print $1, $2, $3}' > $NODE_RES_FILE
+```
+
+* The script will still show **Pods + Containers + Pods per Namespace**.
+
+---
+
+✅ **Summary**
+
+1. Install `jq` → fixes JSON parsing errors.
+2. Install `metrics-server` → fixes CPU/Memory errors.
+3. Optional: Comment out metrics section if you only want Pod/Container info.
+
+---
+
+If you want, I can **give you a fully fixed version of `cluster-overview-live.sh`** that **checks for `jq` and metrics-server**, and **gracefully skips metrics if not available**, so it runs without errors immediately.
+
+
+
