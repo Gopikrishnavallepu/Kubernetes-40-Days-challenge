@@ -1,0 +1,26 @@
+# nginx-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-test-svc
+  namespace: test
+spec:
+  selector:
+    app: nginx-test
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-prod-svc
+  namespace: prod
+spec:
+  selector:
+    app: nginx-prod
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP

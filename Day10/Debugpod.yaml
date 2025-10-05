@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: net-tools
+  namespace: default
+spec:
+  containers:
+  - name: net-tools
+    image: praqma/network-multitool
+    command: ["/bin/bash"]
+    tty: true

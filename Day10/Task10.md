@@ -188,3 +188,398 @@ This was a fantastic exercise to solidify my understanding of namespaces. My mai
 This concludes today's hands-on lab. Join me next time as we dive into multi-container pods! #40DaysOfKubernetes #CKA #Kubernetes #DevOps
 
 ***
+
+Perfect ✅ — here’s a **high-level, real-world structure** to create **test** and **prod** environments running NGINX pods (the DevOps-way).
+
+We’ll do this **declaratively (YAML manifests)** — the professional and scalable approach — but I’ll also show you the quick **imperative method** at the end.
+
+---
+
+## 🧭 Overall Architecture
+
+```
+cluster
+├── Namespace: test
+│   └── Deployment: nginx-test
+│       └── Pods (nginx-test-xxxx)
+│   └── Service: nginx-test-svc
+│
+└── Namespace: prod
+    └── Deployment: nginx-prod
+        └── Pods (nginx-prod-xxxx)
+    └── Service: nginx-prod-svc
+```
+
+Each environment (test, prod) is isolated in its own namespace.
+
+---
+
+## 🧩 Step 1: Create namespaces
+
+```bash
+kubectl create namespace test
+kubectl create namespace prod
+```
+
+Or declaratively (in YAML):
+
+```yaml
+# namespaces.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: test
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+```
+
+Apply:
+
+```bash
+kubectl apply -f namespaces.yaml
+```
+
+---
+
+## 🧩 Step 2: Create NGINX Deployments for both environments
+
+```yaml
+# nginx-envs.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-test
+  namespace: test
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: nginx-test
+  template:
+    metadata:
+      labels:
+        app: nginx-test
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: nginx-prod
+  namespace: prod
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: nginx-prod
+  template:
+    metadata:
+      labels:
+        app: nginx-prod
+    spec:
+      containers:
+      - name: nginx
+        image: nginx:1.25
+        ports:
+        - containerPort: 80
+```
+
+Apply:
+
+```bash
+kubectl apply -f nginx-envs.yaml
+```
+
+---
+
+## 🧩 Step 3: Create Services for both
+
+```yaml
+# nginx-services.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-test-svc
+  namespace: test
+spec:
+  selector:
+    app: nginx-test
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-prod-svc
+  namespace: prod
+spec:
+  selector:
+    app: nginx-prod
+  ports:
+  - port: 80
+    targetPort: 80
+  type: ClusterIP
+```
+
+Apply:
+
+```bash
+kubectl apply -f nginx-services.yaml
+```
+
+---
+
+## 🧩 Step 4: Verify Everything
+
+```bash
+kubectl get all -n test
+kubectl get all -n prod
+```
+
+You should see:
+
+```
+NAME                           READY   STATUS    RESTARTS   AGE
+pod/nginx-test-xxxxx           1/1     Running   0          2m
+...
+service/nginx-test-svc         ClusterIP   10.x.x.x   <none>   80/TCP
+```
+
+---
+
+## 🧩 Step 5: (Optional) Expose externally (for browser access)
+
+If you’re testing locally:
+
+```bash
+kubectl expose deployment nginx-test -n test --type=NodePort --port=80
+kubectl expose deployment nginx-prod -n prod --type=NodePort --port=80
+```
+
+Then find ports:
+
+```bash
+kubectl get svc -A | grep nginx
+```
+
+and access:
+
+```
+http://<node-ip>:<nodeport>
+```
+
+---
+
+## 🧩 Quick Imperative Shortcut (if you just want to test fast)
+
+```bash
+kubectl create namespace test
+kubectl create namespace prod
+
+kubectl run nginx-test --image=nginx -n test
+kubectl expose pod nginx-test --port=80 --type=NodePort -n test
+
+kubectl run nginx-prod --image=nginx -n prod
+kubectl expose pod nginx-prod --port=80 --type=NodePort -n prod
+```
+
+---
+
+Would you like me to make this more **production-style**, with configs (like ConfigMap + resource limits + different index pages per environment)? That’s the next level for real-world dev/test/prod setups.
+
+
+Perfect 👌 let’s walk through how **to properly test internal Pod-to-Pod and Pod-to-Service connectivity in Kubernetes** — this is a **real-world troubleshooting workflow** used by DevOps/SRE/SOC teams.
+
+---
+
+## 🧠 Why Do This?
+
+Sometimes your app Pod (like NGINX or Flask) can’t reach another Pod or service (like Redis, API, or DB). Instead of guessing, we use a **debug Pod** to test networking *inside* the cluster.
+
+---
+
+## ⚙️ Step 1: Create a Temporary Debug Pod
+
+You’ll run a simple container (with tools like `curl`, `ping`, and `nslookup`) to test connectivity.
+
+```bash
+kubectl run net-debug --rm -it \
+  --image=busybox:1.35 \
+  --restart=Never \
+  -- sh
+```
+
+👉 What happens:
+
+* `--rm`: removes the pod after you exit
+* `--it`: opens an interactive shell
+* `--restart=Never`: runs it as a one-off pod
+* `--image=busybox:1.35`: small Linux image with basic tools
+* You’ll land inside the container shell (`/ #` prompt)
+
+---
+
+## 🧰 Step 2: Test Pod-to-Pod Connectivity
+
+### 🔹 Find the target Pod
+
+```bash
+kubectl get pods -A -o wide
+```
+
+Example output:
+
+```
+NAMESPACE   NAME                     IP           NODE
+dev         nginx-dev-75bcbd7dc4-z9r7k   10.244.1.5   kind-worker
+prod        nginx-prod-d7cdd969f-7ccsw   10.244.3.4   kind-worker2
+```
+
+### 🔹 From inside your debug Pod, test:
+
+```bash
+# Check ping
+ping -c 3 10.244.3.4
+
+# Try connecting via HTTP
+curl -v http://10.244.3.4
+```
+
+✅ If successful:
+
+* You’ll get an HTTP response (like `200 OK`)
+  ❌ If it fails:
+* You’ll see timeout — meaning pod networking or service exposure is misconfigured.
+
+---
+
+## 🧭 Step 3: Test Pod-to-Service Connectivity
+
+### 🔹 List services:
+
+```bash
+kubectl get svc -A -o wide
+```
+
+Example:
+
+```
+NAMESPACE   NAME             CLUSTER-IP     PORT(S)
+dev         nginx-dev-svc    10.96.129.249  80/TCP
+prod        nginx-prod-svc   10.96.174.142  80/TCP
+```
+
+### 🔹 Inside the debug pod:
+
+You can test DNS-based service access:
+
+```bash
+nslookup nginx-prod-svc.prod.svc.cluster.local
+```
+
+Then access via cluster DNS name:
+
+```bash
+curl -v http://nginx-prod-svc.prod.svc.cluster.local
+```
+
+✅ Expected:
+You should see an HTML response or “Welcome to nginx”.
+
+---
+
+## 🧩 Step 4: Cross-Check Network Policy (if used)
+
+If ping/curl works from same namespace but fails across namespaces, a **NetworkPolicy** might block traffic.
+
+```bash
+kubectl get networkpolicy -A
+```
+
+If any exist, describe them:
+
+```bash
+kubectl describe networkpolicy -n <namespace> <policy-name>
+```
+
+Check if ingress/egress allows connections between those namespaces.
+
+---
+
+## 🧹 Step 5: Cleanup (Optional)
+
+When done, simply exit:
+
+```bash
+exit
+```
+
+The `--rm` flag automatically deletes your `net-debug` pod.
+
+---
+
+## 🧾 Bonus: Create a Permanent Debug Pod
+
+If you often debug clusters, deploy a full-featured “toolbox” pod:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: v1
+kind: Pod
+metadata:
+  name: net-tools
+  namespace: default
+spec:
+  containers:
+  - name: net-tools
+    image: praqma/network-multitool
+    command: ["/bin/bash"]
+    tty: true
+EOF
+```
+
+Then use:
+
+```bash
+kubectl exec -it net-tools -- bash
+```
+
+It comes with `curl`, `wget`, `dig`, `nslookup`, `ping`, `traceroute`, `netcat`, etc.
+
+---
+
+## ✅ Summary Table
+
+| Step | What It Tests    | Command                                                                     |
+| ---- | ---------------- | --------------------------------------------------------------------------- |
+| 1    | Create debug pod | `kubectl run net-debug --rm -it --image=busybox:1.35 --restart=Never -- sh` |
+| 2    | Pod-to-Pod       | `curl 10.244.x.x`                                                           |
+| 3    | Pod-to-Service   | `curl http://<svc>.<namespace>.svc.cluster.local`                           |
+| 4    | DNS resolution   | `nslookup <svc>.<namespace>.svc.cluster.local`                              |
+| 5    | Network policy   | `kubectl get networkpolicy -A`                                              |
+| 6    | Cleanup          | `exit`                                                                      |
+
+---
+
+| Step | Check                  | Command                                               |           |
+| ---- | ---------------------- | ----------------------------------------------------- | --------- |
+| 1    | CoreDNS pods running   | `kubectl get pods -n kube-system -l k8s-app=kube-dns` |           |
+| 2    | CoreDNS service exists | `kubectl get svc -n kube-system`                      |           |
+| 3    | Pod DNS config         | `cat /etc/resolv.conf`                                |           |
+| 4    | CNI plugin healthy     | `kubectl get pods -n kube-system                      | grep cni` |
+| 5    | Verify via another pod | `nslookup kube-dns.kube-system.svc.cluster.local`     |           |
+| 6    | KIND/Windows DNS fix   | Restart CoreDNS + Kind cluster                        |           |
+| 7    | Retest                 | `nslookup` + `curl` to service                        |           |
+
+
+Would you like me to give you a **hands-on YAML + commands mini lab** (like “Deploy nginx in `prod`, redis in `dev`, and use a debug Pod to verify connectivity between them”)?
+That’s a common **Kubernetes network troubleshooting interview exercise.**
