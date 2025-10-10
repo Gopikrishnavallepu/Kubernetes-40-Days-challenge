@@ -3766,3 +3766,446 @@ kubectl describe pod <pod-name>
 # Check events
 kubectl get events --sort-by='.last
 
+
+#### Troubleshooting Kubernetes Clusters
+
+**Common Issues and Solutions:**
+
+**1. Pod Issues:**
+
+```bash
+# Check Pod status
+kubectl get pods
+kubectl describe pod <pod-name>
+
+# Common Pod states:
+# - Pending: Can't be scheduled
+# - CrashLoopBackOff: Container keeps crashing
+# - ImagePullBackOff: Can't pull image
+# - Error: Container exited with error
+# - OOMKilled: Out of memory
+
+# Check events
+kubectl get events --sort-by='.lastTimestamp'
+kubectl get events --field-selector involvedObject.name=<pod-name>
+
+# Check logs
+kubectl logs <pod-name>
+kubectl logs <pod-name> --previous  # Previous crashed container
+
+# Debug with ephemeral container (K8s 1.23+)
+kubectl debug <pod-name> -it --image=busybox:1.33 --target=<container-name>
+
+# Check resource usage
+kubectl top pod <pod-name>
+
+# Execute into Pod
+kubectl exec -it <pod-name> -- /bin/sh
+```
+
+**2. Node Issues:**
+
+```bash
+# Check node status
+kubectl get nodes
+kubectl describe node <node-name>
+
+# Check node conditions
+kubectl get nodes -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.status.conditions[?(@.type=="Ready")].status}{"\n"}{end}'
+
+# Common node conditions:
+# - Ready: Node is healthy
+# - MemoryPressure: Node running out of memory
+# - DiskPressure: Node running out of disk space
+# - PIDPressure: Too many processes
+# - NetworkUnavailable: Network not configured
+
+# Drain node for maintenance
+kubectl drain <node-name> --ignore-daemonsets --delete-emptydir-data
+
+# Uncordon node
+kubectl uncordon <node-name>
+
+# Cordon node (prevent new pods)
+kubectl cordon <node-name>
+
+# SSH to node and check
+ssh <node>
+systemctl status kubelet
+journalctl -u kubelet -f
+docker ps  # or crictl ps
+df -h  # Check disk space
+free -h  # Check memory
+```
+
+**3. Network Issues:**
+
+```bash
+# Check Service
+kubectl get svc
+kubectl describe svc <service-name>
+
+# Check endpoints
+kubectl get endpoints <service-name>
+
+# Test DNS resolution
+kubectl run dnsutils --image=gcr.io/kubernetes-e2e-test-images/dnsutils:1.3 --rm -it --restart=Never -- nslookup kubernetes.default
+
+# Test connectivity between Pods
+kubectl run test-pod --image=busybox:1.33 --rm -it --restart=Never -- wget -O- <service-name>
+
+# Check NetworkPolicies
+kubectl get networkpolicies
+kubectl describe networkpolicy <policy-name>
+
+# Check kube-proxy
+kubectl get pods -n kube-system -l k8s-app=kube-proxy
+kubectl logs -n kube-system <kube-proxy-pod>
+
+# Check iptables rules (on node)
+sudo iptables-save | grep <service-name>
+```
+
+**4. Storage Issues:**
+
+```bash
+# Check PV and PVC
+kubectl get pv
+kubectl get pvc
+kubectl describe pvc <pvc-name>
+
+# Check PVC events
+kubectl get events --field-selector involvedObject.name=<pvc-name>
+
+# Common issues:
+# - PVC stuck in Pending: No matching PV or StorageClass
+# - Mount failures: Check node logs
+
+# Check StorageClass
+kubectl get storageclass
+kubectl describe storageclass <sc-name>
+```
+
+**5. Control Plane Issues:**
+
+```bash
+# Check control plane components
+kubectl get pods -n kube-system
+
+# Check component health
+kubectl get componentstatuses  # Deprecated in newer versions
+
+# Check API server
+kubectl cluster-info
+curl -k https://<api-server-ip>:6443/healthz
+
+# Check etcd (on control plane node)
+ETCDCTL_API=3 etcdctl --endpoints=https://127.0.0.1:2379 \
+  --cacert=/etc/kubernetes/pki/etcd/ca.crt \
+  --cert=/etc/kubernetes/pki/etcd/server.crt \
+  --key=/etc/kubernetes/pki/etcd/server.key \
+  endpoint health
+
+# Check scheduler
+kubectl logs -n kube-system <scheduler-pod>
+
+# Check controller manager
+kubectl logs -n kube-system <controller-manager-pod>
+```
+
+**6. RBAC Issues:**
+
+```bash
+# Check if user can perform action
+kubectl auth can-i create pods
+kubectl auth can-i create pods --as=jane
+kubectl auth can-i create pods --as=system:serviceaccount:default:mysa
+
+# Check user's permissions
+kubectl auth can-i --list
+
+# Debug RBAC
+kubectl describe role <role-name>
+kubectl describe rolebinding <rolebinding-name>
+```
+
+**Troubleshooting Workflow:**
+
+```yaml
+# debug-pod.yaml - Useful debug pod
+apiVersion: v1
+kind: Pod
+metadata:
+  name: debug-pod
+spec:
+  containers:
+  - name: debug
+    image: nicolaka/netshoot:latest
+    command: ['sh', '-c', 'sleep 3600']
+    securityContext:
+      capabilities:
+        add: ["NET_ADMIN", "NET_RAW"]
+```
+
+```bash
+# Create debug pod
+kubectl apply -f debug-pod.yaml
+
+# Use debug pod for troubleshooting
+kubectl exec -it debug-pod -- bash
+
+# Inside debug pod:
+# - ping, traceroute, nslookup, dig
+# - curl, wget
+# - netstat, ss, iptables
+# - tcpdump
+```
+
+**Cluster Debugging Commands:**
+
+```bash
+# Get all resources in namespace
+kubectl get all -n <namespace>
+
+# Get all resources across all namespaces
+kubectl get all -A
+
+# Describe resource
+kubectl describe <resource-type> <resource-name>
+
+# Check resource YAML
+kubectl get <resource-type> <resource-name> -o yaml
+
+# Check resource JSON
+kubectl get <resource-type> <resource-name> -o json
+
+# Get resource with custom columns
+kubectl get pods -o custom-columns=NAME:.metadata.name,STATUS:.status.phase,NODE:.spec.nodeName
+
+# Watch resources
+kubectl get pods -w
+
+# Get events
+kubectl get events -A --sort-by='.lastTimestamp'
+
+# Check API resources
+kubectl api-resources
+
+# Check API versions
+kubectl api-versions
+
+# Explain resource
+kubectl explain pod
+kubectl explain pod.spec.containers
+```
+
+---
+
+### 3. Extending Kubernetes
+
+#### Custom Resources (CRD)
+
+**What are Custom Resources?**
+- Extensions to Kubernetes API
+- Define your own resource types
+- Store and retrieve custom objects
+
+**Example: Simple CRD**
+
+```yaml
+# crd-definition.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: applications.example.com
+spec:
+  group: example.com
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              name:
+                type: string
+              replicas:
+                type: integer
+                minimum: 1
+                maximum: 10
+              image:
+                type: string
+            required:
+            - name
+            - image
+  scope: Namespaced
+  names:
+    plural: applications
+    singular: application
+    kind: Application
+    shortNames:
+    - app
+```
+
+**Example: Custom Resource**
+
+```yaml
+# custom-resource.yaml
+apiVersion: example.com/v1
+kind: Application
+metadata:
+  name: my-app
+spec:
+  name: web-application
+  replicas: 3
+  image: nginx:1.21
+```
+
+```bash
+# Create CRD
+kubectl apply -f crd-definition.yaml
+
+# Verify CRD
+kubectl get crd
+kubectl describe crd applications.example.com
+
+# Create custom resource
+kubectl apply -f custom-resource.yaml
+
+# Get custom resources
+kubectl get applications
+kubectl get app  # Using short name
+
+# Describe custom resource
+kubectl describe application my-app
+
+# Get in YAML
+kubectl get application my-app -o yaml
+
+# Delete custom resource
+kubectl delete application my-app
+
+# Delete CRD (also deletes all custom resources)
+kubectl delete crd applications.example.com
+```
+
+**Example: CRD with Status Subresource**
+
+```yaml
+# crd-with-status.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: databases.example.com
+spec:
+  group: example.com
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              engine:
+                type: string
+                enum: ["mysql", "postgresql", "mongodb"]
+              version:
+                type: string
+              storage:
+                type: string
+            required:
+            - engine
+            - version
+          status:
+            type: object
+            properties:
+              state:
+                type: string
+              ready:
+                type: boolean
+    subresources:
+      status: {}
+    additionalPrinterColumns:
+    - name: Engine
+      type: string
+      jsonPath: .spec.engine
+    - name: Version
+      type: string
+      jsonPath: .spec.version
+    - name: State
+      type: string
+      jsonPath: .status.state
+    - name: Age
+      type: date
+      jsonPath: .metadata.creationTimestamp
+  scope: Namespaced
+  names:
+    plural: databases
+    singular: database
+    kind: Database
+    shortNames:
+    - db
+```
+
+```yaml
+# database-instance.yaml
+apiVersion: example.com/v1
+kind: Database
+metadata:
+  name: production-db
+spec:
+  engine: postgresql
+  version: "14.5"
+  storage: 100Gi
+```
+
+```bash
+# Create CRD with status
+kubectl apply -f crd-with-status.yaml
+
+# Create database instance
+kubectl apply -f database-instance.yaml
+
+# View with custom columns
+kubectl get databases
+
+# Update status (requires controller)
+kubectl patch database production-db --type=merge --subresource=status -p '{"status":{"state":"Running","ready":true}}'
+```
+
+**Example: CRD Validation**
+
+```yaml
+# crd-with-validation.yaml
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: configs.example.com
+spec:
+  group: example.com
+  versions:
+  - name: v1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          spec:
+            type: object
+            properties:
+              replicas:
+                type: integer
+                minimum: 1
+                maximum: 100
+              environment:
+                type: string
+                pattern: '^(dev|staging|prod)
