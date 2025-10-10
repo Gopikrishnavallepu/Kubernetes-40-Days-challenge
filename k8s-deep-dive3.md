@@ -4188,3 +4188,773 @@ spec:
               environment:
                 type: string
                 pattern: '^(dev|staging|prod)
+```
+
+
+#### Operators
+
+**What is an Operator?**
+- Custom controller for CRDs
+- Implements application-specific operational knowledge
+- Automates deployment, scaling, backup, recovery
+
+**Operator Pattern:**
+1. Watch custom resources
+2. Compare desired state (spec) vs current state (status)
+3. Take action to reconcile state
+
+**Example: Simple Operator (Conceptual)**
+
+```python
+# Simple operator pseudocode
+from kubernetes import client, config, watch
+
+def reconcile(custom_resource):
+    """Reconcile actual state to desired state"""
+    desired_replicas = custom_resource['spec']['replicas']
+    current_replicas = get_current_replicas(custom_resource)
+    
+    if desired_replicas > current_replicas:
+        scale_up(custom_resource)
+    elif desired_replicas < current_replicas:
+        scale_down(custom_resource)
+    
+    update_status(custom_resource, 'Ready')
+
+def main():
+    config.load_kube_config()
+    api = client.CustomObjectsApi()
+    
+    w = watch.Watch()
+    for event in w.stream(api.list_namespaced_custom_object,
+                          group="example.com",
+                          version="v1",
+                          namespace="default",
+                          plural="applications"):
+        if event['type'] in ['ADDED', 'MODIFIED']:
+            reconcile(event['object'])
+
+if __name__ == '__main__':
+    main()
+```
+
+**Popular Operators:**
+- **Prometheus Operator**: Manages Prometheus deployments
+- **MySQL Operator**: Manages MySQL clusters
+- **Elasticsearch Operator**: Manages Elasticsearch clusters
+- **Cert Manager**: Manages TLS certificates
+
+**Example: Deploy Prometheus Operator**
+
+```bash
+# Add Prometheus Operator repository
+helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+helm repo update
+
+# Install Prometheus Operator
+helm install prometheus prometheus-community/kube-prometheus-stack -n monitoring --create-namespace
+
+# Check CRDs created by operator
+kubectl get crd | grep monitoring.coreos.com
+
+# View operator resources
+kubectl get all -n monitoring
+
+# Create ServiceMonitor (custom resource)
+cat <<EOF | kubectl apply -f -
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: app-monitor
+  namespace: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: my-app
+  endpoints:
+  - port: metrics
+    interval: 30s
+EOF
+```
+
+**Operator SDK** (for building operators):
+
+```bash
+# Install Operator SDK
+# Follow: https://sdk.operatorframework.io/docs/installation/
+
+# Create new operator project
+operator-sdk init --domain=example.com --repo=github.com/myuser/myoperator
+
+# Create API and controller
+operator-sdk create api --group=apps --version=v1 --kind=AppService
+
+# Build and deploy operator
+make docker-build docker-push IMG=myregistry/myoperator:v1
+make deploy IMG=myregistry/myoperator:v1
+```
+
+#### Admission Controllers
+
+**What are Admission Controllers?**
+- Plugins that intercept requests to Kubernetes API
+- Can mutate or validate objects before persistence
+- Run after authentication and authorization
+
+**Types:**
+- **Validating**: Accept or reject requests
+- **Mutating**: Modify requests before storage
+
+**Built-in Admission Controllers:**
+- NamespaceLifecycle
+- LimitRanger
+- ResourceQuota
+- PodSecurityPolicy (deprecated)
+- PodSecurity
+- ServiceAccount
+- MutatingAdmissionWebhook
+- ValidatingAdmissionWebhook
+
+**Example: Validating Webhook**
+
+```yaml
+# validating-webhook-config.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: ValidatingWebhookConfiguration
+metadata:
+  name: pod-policy-validator
+webhooks:
+- name: validate.pods.example.com
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: default
+      path: "/validate"
+    caBundle: <base64-encoded-ca-cert>
+  rules:
+  - operations: ["CREATE", "UPDATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 5
+  failurePolicy: Fail
+```
+
+**Example: Mutating Webhook**
+
+```yaml
+# mutating-webhook-config.yaml
+apiVersion: admissionregistration.k8s.io/v1
+kind: MutatingWebhookConfiguration
+metadata:
+  name: pod-label-injector
+webhooks:
+- name: mutate.pods.example.com
+  clientConfig:
+    service:
+      name: webhook-service
+      namespace: default
+      path: "/mutate"
+    caBundle: <base64-encoded-ca-cert>
+  rules:
+  - operations: ["CREATE"]
+    apiGroups: [""]
+    apiVersions: ["v1"]
+    resources: ["pods"]
+  admissionReviewVersions: ["v1"]
+  sideEffects: None
+  timeoutSeconds: 5
+  failurePolicy: Ignore
+```
+
+**Webhook Server Example (Conceptual in Go):**
+
+```go
+// Simplified webhook server
+package main
+
+import (
+    "encoding/json"
+    "net/http"
+    admissionv1 "k8s.io/api/admission/v1"
+    corev1 "k8s.io/api/core/v1"
+)
+
+func mutatePod(w http.ResponseWriter, r *http.Request) {
+    var admissionReview admissionv1.AdmissionReview
+    json.NewDecoder(r.Body).Decode(&admissionReview)
+    
+    pod := corev1.Pod{}
+    json.Unmarshal(admissionReview.Request.Object.Raw, &pod)
+    
+    // Add label to Pod
+    if pod.Labels == nil {
+        pod.Labels = make(map[string]string)
+    }
+    pod.Labels["injected-by"] = "webhook"
+    
+    // Create patch
+    patch := []map[string]interface{}{
+        {
+            "op": "add",
+            "path": "/metadata/labels/injected-by",
+            "value": "webhook",
+        },
+    }
+    
+    patchBytes, _ := json.Marshal(patch)
+    
+    response := admissionv1.AdmissionReview{
+        Response: &admissionv1.AdmissionResponse{
+            UID: admissionReview.Request.UID,
+            Allowed: true,
+            Patch: patchBytes,
+            PatchType: func() *admissionv1.PatchType {
+                pt := admissionv1.PatchTypeJSONPatch
+                return &pt
+            }(),
+        },
+    }
+    
+    json.NewEncoder(w).Encode(response)
+}
+
+func main() {
+    http.HandleFunc("/mutate", mutatePod)
+    http.ListenAndServeTLS(":8443", "tls.crt", "tls.key", nil)
+}
+```
+
+**OPA (Open Policy Agent) Gatekeeper:**
+
+```bash
+# Install Gatekeeper
+kubectl apply -f https://raw.githubusercontent.com/open-policy-agent/gatekeeper/master/deploy/gatekeeper.yaml
+
+# Verify installation
+kubectl get pods -n gatekeeper-system
+```
+
+**Example: Gatekeeper Constraint Template**
+
+```yaml
+# constraint-template.yaml
+apiVersion: templates.gatekeeper.sh/v1
+kind: ConstraintTemplate
+metadata:
+  name: k8srequiredlabels
+spec:
+  crd:
+    spec:
+      names:
+        kind: K8sRequiredLabels
+      validation:
+        openAPIV3Schema:
+          type: object
+          properties:
+            labels:
+              type: array
+              items:
+                type: string
+  targets:
+  - target: admission.k8s.gatekeeper.sh
+    rego: |
+      package k8srequiredlabels
+      
+      violation[{"msg": msg, "details": {"missing_labels": missing}}] {
+        provided := {label | input.review.object.metadata.labels[label]}
+        required := {label | label := input.parameters.labels[_]}
+        missing := required - provided
+        count(missing) > 0
+        msg := sprintf("Required labels missing: %v", [missing])
+      }
+```
+
+**Example: Gatekeeper Constraint**
+
+```yaml
+# constraint.yaml
+apiVersion: constraints.gatekeeper.sh/v1beta1
+kind: K8sRequiredLabels
+metadata:
+  name: pods-must-have-labels
+spec:
+  match:
+    kinds:
+    - apiGroups: [""]
+      kinds: ["Pod"]
+  parameters:
+    labels: ["app", "environment"]
+```
+
+```bash
+# Apply constraint template and constraint
+kubectl apply -f constraint-template.yaml
+kubectl apply -f constraint.yaml
+
+# Test by creating Pod without required labels (should fail)
+kubectl run test-pod --image=nginx:1.21
+
+# Create Pod with required labels (should succeed)
+kubectl run test-pod --image=nginx:1.21 --labels="app=test,environment=dev"
+```
+
+---
+
+### 4. Windows in Kubernetes
+
+#### Overview of Windows Container Support
+
+**Windows Support:**
+- Kubernetes supports Windows nodes since v1.14 (stable in v1.19+)
+- Windows Server 2019+ required
+- Windows containers run alongside Linux containers in same cluster
+- Control plane must run on Linux
+
+**Limitations:**
+- Privileged containers not supported
+- Host networking not supported
+- Some volume types not supported
+- Resource limits work differently
+
+**Windows Node Setup:**
+
+```bash
+# On Windows node, install containerd
+# Follow: https://kubernetes.io/docs/setup/production-environment/windows/
+
+# Join Windows node to cluster
+kubeadm join --token <token> <control-plane>:6443 --discovery-token-ca-cert-hash sha256:<hash>
+```
+
+**Example: Windows Pod**
+
+```yaml
+# windows-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: windows-pod
+spec:
+  nodeSelector:
+    kubernetes.io/os: windows
+  containers:
+  - name: iis
+    image: mcr.microsoft.com/windows/servercore/iis:windowsservercore-ltsc2019
+    ports:
+    - containerPort: 80
+  tolerations:
+  - key: "os"
+    operator: "Equal"
+    value: "windows"
+    effect: "NoSchedule"
+```
+
+**Example: Mixed OS Deployment**
+
+```yaml
+# mixed-deployment.yaml
+---
+# Linux Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: linux-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+      os: linux
+  template:
+    metadata:
+      labels:
+        app: web
+        os: linux
+    spec:
+      nodeSelector:
+        kubernetes.io/os: linux
+      containers:
+      - name: nginx
+        image: nginx:1.21
+        ports:
+        - containerPort: 80
+
+---
+# Windows Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: windows-web
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: web
+      os: windows
+  template:
+    metadata:
+      labels:
+        app: web
+        os: windows
+    spec:
+      nodeSelector:
+        kubernetes.io/os: windows
+      containers:
+      - name: iis
+        image: mcr.microsoft.com/windows/servercore/iis:windowsservercore-ltsc2019
+        ports:
+        - containerPort: 80
+      tolerations:
+      - key: "os"
+        operator: "Equal"
+        value: "windows"
+        effect: "NoSchedule"
+
+---
+# Service (routes to both)
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-service
+spec:
+  selector:
+    app: web
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+  type: LoadBalancer
+```
+
+#### Networking for Windows Containers
+
+**Network Modes:**
+- **L2Bridge**: Default mode, similar to Docker bridge
+- **Overlay**: For cross-node communication
+- **Transparent**: Direct access to physical network
+
+**Example: Windows Network Policy**
+
+```yaml
+# windows-network-policy.yaml
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: windows-policy
+spec:
+  podSelector:
+    matchLabels:
+      os: windows
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: frontend
+    ports:
+    - protocol: TCP
+      port: 80
+  egress:
+  - to:
+    - podSelector:
+        matchLabels:
+          app: database
+    ports:
+    - protocol: TCP
+      port: 1433
+```
+
+**Windows-specific Considerations:**
+
+```yaml
+# windows-statefulset.yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: windows-app
+spec:
+  serviceName: "windows-svc"
+  replicas: 2
+  selector:
+    matchLabels:
+      app: windows-app
+  template:
+    metadata:
+      labels:
+        app: windows-app
+    spec:
+      nodeSelector:
+        kubernetes.io/os: windows
+      containers:
+      - name: app
+        image: mcr.microsoft.com/dotnet/framework/aspnet:4.8
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: data
+          mountPath: C:\data
+      tolerations:
+      - key: "os"
+        operator: "Equal"
+        value: "windows"
+        effect: "NoSchedule"
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 1Gi
+```
+
+---
+
+## IV. References
+
+### Official Documentation
+- **Kubernetes Documentation**: https://kubernetes.io/docs/
+- **Kubernetes API Reference**: https://kubernetes.io/docs/reference/kubernetes-api/
+- **Kubectl Reference**: https://kubernetes.io/docs/reference/kubectl/
+- **Kubernetes GitHub**: https://github.com/kubernetes/kubernetes
+
+### Learning Resources
+- **Kubernetes Tutorials**: https://kubernetes.io/docs/tutorials/
+- **Kubernetes Tasks**: https://kubernetes.io/docs/tasks/
+- **Interactive Tutorial**: https://kubernetes.io/docs/tutorials/kubernetes-basics/
+- **Katacoda**: https://www.katacoda.com/courses/kubernetes
+
+### Tools and Extensions
+- **Helm**: https://helm.sh/ (Package manager)
+- **Kustomize**: https://kustomize.io/ (Configuration management)
+- **Kubectl Plugins**: https://krew.sigs.k8s.io/ (Plugin manager)
+- **K9s**: https://k9scli.io/ (Terminal UI)
+- **Lens**: https://k8slens.dev/ (IDE for Kubernetes)
+
+### Best Practices
+- **Configuration Best Practices**: https://kubernetes.io/docs/concepts/configuration/overview/
+- **Security Best Practices**: https://kubernetes.io/docs/concepts/security/
+- **Resource Management**: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
+
+### Community
+- **Kubernetes Slack**: https://slack.k8s.io/
+- **Stack Overflow**: https://stackoverflow.com/questions/tagged/kubernetes
+- **Reddit**: https://reddit.com/r/kubernetes
+- **CNCF**: https://www.cncf.io/
+
+### Certifications
+- **CKA**: Certified Kubernetes Administrator
+- **CKAD**: Certified Kubernetes Application Developer
+- **CKS**: Certified Kubernetes Security Specialist
+
+---
+
+## Practice Exercises
+
+### Exercise 1: Deploy a Multi-Tier Application
+
+```yaml
+# Complete application stack
+---
+# PostgreSQL Database
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:14
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        ports:
+        - containerPort: 5432
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: 5Gi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+
+---
+# Backend API
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: backend
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: backend
+  template:
+    metadata:
+      labels:
+        app: backend
+    spec:
+      containers:
+      - name: api
+        image: your-backend:v1
+        env:
+        - name: DB_HOST
+          value: postgres
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: db-secret
+              key: password
+        ports:
+        - containerPort: 8080
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: backend
+spec:
+  selector:
+    app: backend
+  ports:
+  - port: 8080
+
+---
+# Frontend
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: frontend
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: frontend
+  template:
+    metadata:
+      labels:
+        app: frontend
+    spec:
+      containers:
+      - name: web
+        image: your-frontend:v1
+        ports:
+        - containerPort: 80
+        resources:
+          requests:
+            cpu: 50m
+            memory: 64Mi
+          limits:
+            cpu: 200m
+            memory: 256Mi
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+spec:
+  selector:
+    app: frontend
+  ports:
+  - port: 80
+
+---
+# Ingress
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: app-ingress
+spec:
+  ingressClassName: nginx
+  rules:
+  - host: myapp.example.com
+    http:
+      paths:
+      - path: /api
+        pathType: Prefix
+        backend:
+          service:
+            name: backend
+            port:
+              number: 8080
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: frontend
+            port:
+              number: 80
+```
+
+### Exercise 2: Implement Autoscaling
+
+```yaml
+# horizontal-pod-autoscaler.yaml
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: backend-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: backend
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+```
+
+**Congratulations!** You've completed the Kubernetes Deep Dive Guide. Practice these concepts in a real cluster, experiment with different configurations, and continue exploring the official documentation for more advanced topics.
