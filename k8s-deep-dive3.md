@@ -2526,6 +2526,43 @@ spec:
                   cpu:
                     type: string
                     pattern: '^[0-9]+m?
+
+-----
+```yaml
+# pod-security-context.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: security-context-demo
+spec:
+  securityContext:
+    runAsUser: 1000              # Run as specific user
+    runAsGroup: 3000             # Run as specific group
+    fsGroup: 2000                # Volume ownership group
+    fsGroupChangePolicy: "OnRootMismatch"
+    seccompProfile:
+      type: RuntimeDefault       # Seccomp profile
+  containers:
+  - name: sec-ctx-demo
+    image: busybox:1.33
+    command: [ "sh", "-c", "sleep 1h" ]
+    securityContext:
+      allowPrivilegeEscalation: false
+      runAsNonRoot: true
+      runAsUser: 2000
+      capabilities:
+        add: ["NET_ADMIN", "SYS_TIME"]
+        drop: ["ALL"]
+      readOnlyRootFilesystem: true
+            required:
+            - replicas
+            - environment
+  scope: Namespaced
+  names:
+    plural: configs
+    singular: config
+    kind: Config
+```
 ```
 
 
