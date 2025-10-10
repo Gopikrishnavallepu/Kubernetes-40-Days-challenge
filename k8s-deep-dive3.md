@@ -3745,27 +3745,6 @@ kubectl logs -l app=nginx
 # Deploy logging stack
 kubectl apply -f fluentd-daemonset.yaml
 ```
-#### Troubleshooting Kubernetes Clusters
-
-**Common Issues and Solutions:**
-
-**1. Pod Issues:**
-
-```bash
-# Check Pod status
-kubectl get pods
-kubectl describe pod <pod-name>
-
-# Common Pod states:
-# - Pending: Can't be scheduled
-# - CrashLoopBackOff: Container keeps crashing
-# - ImagePullBackOff: Can't pull image
-# - Error: Container exited with error
-# - OOMKilled: Out of memory
-
-# Check events
-kubectl get events --sort-by='.last
-
 
 #### Troubleshooting Kubernetes Clusters
 
