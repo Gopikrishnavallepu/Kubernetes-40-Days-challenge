@@ -2520,3 +2520,395 @@ spec:
         add: ["NET_ADMIN", "SYS_TIME"]
         drop: ["ALL"]
       readOnlyRootFilesystem: true
+```
+
+
+
+      readOnlyRootFilesystem: true
+
+```bash
+# Create pod with security context
+kubectl apply -f pod-security-context.yaml
+
+# Verify user/group
+kubectl exec security-context-demo -- id
+kubectl exec security-context-demo -- ps aux
+```
+
+#### Network Security
+
+**Network Policies** (covered earlier) provide network-level security.
+
+**Additional Network Security Practices:**
+- Use Network Policies to restrict Pod-to-Pod communication
+- Implement zero-trust networking
+- Use service mesh (Istio, Linkerd) for mTLS
+- Encrypt traffic between nodes
+- Use private registries for container images
+
+**Example: Deny All + Allow Specific**
+
+```yaml
+# network-security-example.yaml
+---
+# Default deny all ingress
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny-ingress
+  namespace: production
+spec:
+  podSelector: {}
+  policyTypes:
+  - Ingress
+
+---
+# Allow from frontend to backend
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-frontend-to-backend
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: backend
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: frontend
+    ports:
+    - protocol: TCP
+      port: 8080
+
+---
+# Allow backend to database
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-backend-to-db
+  namespace: production
+spec:
+  podSelector:
+    matchLabels:
+      tier: database
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          tier: backend
+    ports:
+    - protocol: TCP
+      port: 5432
+```
+
+---
+
+### 5. Policies
+
+#### Resource Quotas
+
+**What are Resource Quotas?**
+- Limit resource consumption per namespace
+- Prevent resource exhaustion
+- Enforce fair resource allocation
+
+**Resources that can be limited:**
+- Compute: CPU, memory
+- Storage: PersistentVolumeClaims, storage requests
+- Objects: Pods, Services, Secrets, ConfigMaps
+
+**Example: Resource Quota**
+
+```yaml
+# resource-quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: compute-quota
+  namespace: development
+spec:
+  hard:
+    requests.cpu: "10"              # Total CPU requests
+    requests.memory: 20Gi           # Total memory requests
+    limits.cpu: "20"                # Total CPU limits
+    limits.memory: 40Gi             # Total memory limits
+    persistentvolumeclaims: "5"     # Max number of PVCs
+    requests.storage: 50Gi          # Total storage requests
+    pods: "20"                      # Max number of Pods
+    services: "10"                  # Max number of Services
+    secrets: "15"                   # Max number of Secrets
+    configmaps: "15"                # Max number of ConfigMaps
+```
+
+**Example: Object Count Quota**
+
+```yaml
+# object-quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: object-quota
+  namespace: development
+spec:
+  hard:
+    count/deployments.apps: "5"
+    count/services: "5"
+    count/secrets: "10"
+    count/configmaps: "10"
+    count/persistentvolumeclaims: "3"
+```
+
+**Example: Scoped Quota**
+
+```yaml
+# scoped-quota.yaml
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: priority-quota
+  namespace: development
+spec:
+  hard:
+    requests.cpu: "5"
+    requests.memory: 10Gi
+  scopeSelector:
+    matchExpressions:
+    - operator: In
+      scopeName: PriorityClass
+      values: ["high-priority"]
+```
+
+```bash
+# Create namespace
+kubectl create namespace development
+
+# Apply Resource Quota
+kubectl apply -f resource-quota.yaml
+
+# View Resource Quota
+kubectl get resourcequota -n development
+kubectl describe resourcequota compute-quota -n development
+
+# Try to create Pod without resource limits (will fail)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: no-resources
+  namespace: development
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+EOF
+
+# Create Pod with resource requests/limits (will succeed)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-resources
+  namespace: development
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    resources:
+      requests:
+        memory: "64Mi"
+        cpu: "250m"
+      limits:
+        memory: "128Mi"
+        cpu: "500m"
+EOF
+
+# Check quota usage
+kubectl describe resourcequota compute-quota -n development
+```
+
+#### Limit Ranges
+
+**What are Limit Ranges?**
+- Set default resource requests/limits for Pods and Containers
+- Set min/max constraints
+- Enforce resource ratios
+- Applied at Pod/Container creation time
+
+**Example: Container Limit Range**
+
+```yaml
+# limit-range.yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: container-limits
+  namespace: development
+spec:
+  limits:
+  - type: Container
+    max:
+      cpu: "2"
+      memory: "2Gi"
+    min:
+      cpu: "100m"
+      memory: "64Mi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "200m"
+      memory: "256Mi"
+    maxLimitRequestRatio:
+      cpu: "4"        # Limit can be at most 4x request
+      memory: "4"
+```
+
+**Example: Pod Limit Range**
+
+```yaml
+# pod-limit-range.yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: pod-limits
+  namespace: development
+spec:
+  limits:
+  - type: Pod
+    max:
+      cpu: "4"
+      memory: "8Gi"
+    min:
+      cpu: "200m"
+      memory: "128Mi"
+```
+
+**Example: PVC Limit Range**
+
+```yaml
+# pvc-limit-range.yaml
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: pvc-limits
+  namespace: development
+spec:
+  limits:
+  - type: PersistentVolumeClaim
+    max:
+      storage: "10Gi"
+    min:
+      storage: "1Gi"
+```
+
+```bash
+# Apply Limit Range
+kubectl apply -f limit-range.yaml
+
+# View Limit Range
+kubectl get limitrange -n development
+kubectl describe limitrange container-limits -n development
+
+# Create Pod without resources (gets defaults from LimitRange)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: default-limits
+  namespace: development
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+EOF
+
+# Check applied resources
+kubectl describe pod default-limits -n development
+
+# Try to exceed limits (will fail)
+cat <<EOF | kubectl apply -f -
+apiVersion: v1
+kind: Pod
+metadata:
+  name: too-much
+  namespace: development
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    resources:
+      requests:
+        cpu: "3"
+        memory: "3Gi"
+EOF
+```
+
+**Combined Example: Quota + LimitRange**
+
+```yaml
+# namespace-with-policies.yaml
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: team-a
+
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: team-a-quota
+  namespace: team-a
+spec:
+  hard:
+    requests.cpu: "10"
+    requests.memory: 20Gi
+    limits.cpu: "20"
+    limits.memory: 40Gi
+    pods: "20"
+
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: team-a-limits
+  namespace: team-a
+spec:
+  limits:
+  - type: Container
+    max:
+      cpu: "2"
+      memory: "2Gi"
+    min:
+      cpu: "50m"
+      memory: "32Mi"
+    default:
+      cpu: "500m"
+      memory: "512Mi"
+    defaultRequest:
+      cpu: "100m"
+      memory: "128Mi"
+```
+
+```bash
+# Apply namespace with policies
+kubectl apply -f namespace-with-policies.yaml
+
+# Create deployment in namespace
+kubectl create deployment nginx --image=nginx:1.21 --replicas=3 -n team-a
+
+# Check resource allocation
+kubectl describe resourcequota team-a-quota -n team-a
+kubectl get pods -n team-a -o custom-columns=NAME:.metadata.name,CPU-REQUEST:.spec.containers[0].resources.requests.cpu,MEMORY-REQUEST:.spec.containers[0].resources.requests.memory
+```
+
+---
+
+
+
