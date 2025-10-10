@@ -2520,11 +2520,16 @@ spec:
         add: ["NET_ADMIN", "SYS_TIME"]
         drop: ["ALL"]
       readOnlyRootFilesystem: true
+              resources:
+                type: object
+                properties:
+                  cpu:
+                    type: string
+                    pattern: '^[0-9]+m?
 ```
 
 
 
-      readOnlyRootFilesystem: true
 
 ```bash
 # Create pod with security context
