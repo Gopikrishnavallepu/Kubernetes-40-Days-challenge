@@ -2912,3 +2912,842 @@ kubectl get pods -n team-a -o custom-columns=NAME:.metadata.name,CPU-REQUEST:.sp
 
 
 
+---
+
+## III. Advanced Concepts
+
+### 1. Scheduling, Preemption, and Eviction
+
+#### kube-scheduler
+
+**How kube-scheduler works:**
+1. **Filtering**: Finds feasible nodes (meets Pod requirements)
+2. **Scoring**: Ranks feasible nodes
+3. **Binding**: Assigns Pod to highest-scoring node
+
+**Scheduling Plugins:**
+- NodeResourcesFit: Checks if node has sufficient resources
+- NodeName: Checks if Pod specifies node name
+- NodeAffinity: Checks node affinity rules
+- PodTopologySpread: Spreads Pods across zones/nodes
+- TaintToleration: Checks taints and tolerations
+
+#### Node Affinity/Anti-affinity
+
+**Node Affinity:**
+- Attracts Pods to nodes with specific labels
+- More expressive than nodeSelector
+
+**Types:**
+- **requiredDuringSchedulingIgnoredDuringExecution**: Hard requirement
+- **preferredDuringSchedulingIgnoredDuringExecution**: Soft preference
+
+**Example: Node Affinity**
+
+```yaml
+# node-affinity.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: node-affinity-demo
+spec:
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: disktype
+            operator: In
+            values:
+            - ssd
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 1
+        preference:
+          matchExpressions:
+          - key: availability-zone
+            operator: In
+            values:
+            - us-west-1a
+  containers:
+  - name: app
+    image: nginx:1.21
+```
+
+**Operators:**
+- `In`: Label value in list
+- `NotIn`: Label value not in list
+- `Exists`: Label key exists
+- `DoesNotExist`: Label key doesn't exist
+- `Gt`: Greater than (numeric)
+- `Lt`: Less than (numeric)
+
+```bash
+# Label nodes
+kubectl label nodes node1 disktype=ssd
+kubectl label nodes node2 disktype=hdd
+kubectl label nodes node1 availability-zone=us-west-1a
+
+# Create Pod with node affinity
+kubectl apply -f node-affinity.yaml
+
+# Verify Pod placement
+kubectl get pod node-affinity-demo -o wide
+```
+
+**Pod Affinity/Anti-affinity:**
+
+**Example: Pod Affinity**
+
+```yaml
+# pod-affinity.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: with-pod-affinity
+spec:
+  affinity:
+    podAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+      - labelSelector:
+          matchExpressions:
+          - key: app
+            operator: In
+            values:
+            - cache
+        topologyKey: kubernetes.io/hostname
+  containers:
+  - name: app
+    image: nginx:1.21
+```
+
+**Example: Pod Anti-affinity**
+
+```yaml
+# pod-anti-affinity.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+          - labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - web
+            topologyKey: kubernetes.io/hostname
+      containers:
+      - name: nginx
+        image: nginx:1.21
+```
+
+This ensures no two Pods with `app=web` are scheduled on the same node.
+
+```bash
+# Deploy with anti-affinity
+kubectl apply -f pod-anti-affinity.yaml
+
+# Check Pod distribution
+kubectl get pods -o wide -l app=web
+```
+
+#### Taints and Tolerations
+
+**Taints:** Applied to nodes to repel Pods
+**Tolerations:** Applied to Pods to tolerate taints
+
+**Taint Effects:**
+- **NoSchedule**: Don't schedule new Pods
+- **PreferNoSchedule**: Try not to schedule
+- **NoExecute**: Don't schedule + evict existing Pods
+
+**Example: Adding Taints**
+
+```bash
+# Add taint to node
+kubectl taint nodes node1 key1=value1:NoSchedule
+
+# Add multiple taints
+kubectl taint nodes node1 dedicated=gpu:NoSchedule
+kubectl taint nodes node1 environment=production:NoExecute
+
+# View node taints
+kubectl describe node node1 | grep Taints
+
+# Remove taint
+kubectl taint nodes node1 key1=value1:NoSchedule-
+```
+
+**Example: Pod with Tolerations**
+
+```yaml
+# pod-with-tolerations.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: tolerations-demo
+spec:
+  tolerations:
+  - key: "key1"
+    operator: "Equal"
+    value: "value1"
+    effect: "NoSchedule"
+  - key: "dedicated"
+    operator: "Equal"
+    value: "gpu"
+    effect: "NoSchedule"
+  - key: "environment"
+    operator: "Equal"
+    value: "production"
+    effect: "NoExecute"
+    tolerationSeconds: 3600  # Stay for 1 hour before eviction
+  containers:
+  - name: app
+    image: nginx:1.21
+```
+
+**Toleration Operators:**
+- **Equal**: key=value must match
+- **Exists**: key must exist (ignores value)
+
+```yaml
+# Tolerate any taint with key "dedicated"
+tolerations:
+- key: "dedicated"
+  operator: "Exists"
+  effect: "NoSchedule"
+```
+
+**Example: Dedicated Nodes**
+
+```bash
+# Taint nodes for specific workload
+kubectl taint nodes gpu-node1 workload=ml:NoSchedule
+kubectl taint nodes gpu-node2 workload=ml:NoSchedule
+
+# Label nodes
+kubectl label nodes gpu-node1 gpu=true
+kubectl label nodes gpu-node2 gpu=true
+```
+
+```yaml
+# ml-workload.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ml-training
+spec:
+  tolerations:
+  - key: "workload"
+    operator: "Equal"
+    value: "ml"
+    effect: "NoSchedule"
+  nodeSelector:
+    gpu: "true"
+  containers:
+  - name: training
+    image: tensorflow/tensorflow:latest-gpu
+```
+
+#### Resource Requests and Limits
+
+**Requests:** Guaranteed resources
+**Limits:** Maximum resources allowed
+
+**QoS Classes (Quality of Service):**
+
+1. **Guaranteed:** Requests = Limits for all containers
+2. **Burstable:** At least one container has requests or limits
+3. **BestEffort:** No requests or limits
+
+**Example: QoS Classes**
+
+```yaml
+# guaranteed-qos.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: guaranteed-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    resources:
+      requests:
+        memory: "200Mi"
+        cpu: "500m"
+      limits:
+        memory: "200Mi"
+        cpu: "500m"
+```
+
+```yaml
+# burstable-qos.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: burstable-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    resources:
+      requests:
+        memory: "100Mi"
+        cpu: "250m"
+      limits:
+        memory: "200Mi"
+        cpu: "500m"
+```
+
+```yaml
+# besteffort-qos.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: besteffort-pod
+spec:
+  containers:
+  - name: app
+    image: nginx:1.21
+    # No resources specified
+```
+
+```bash
+# Create Pods
+kubectl apply -f guaranteed-qos.yaml
+kubectl apply -f burstable-qos.yaml
+kubectl apply -f besteffort-qos.yaml
+
+# Check QoS class
+kubectl get pod guaranteed-pod -o jsonpath='{.status.qosClass}'
+kubectl get pod burstable-pod -o jsonpath='{.status.qosClass}'
+kubectl get pod besteffort-pod -o jsonpath='{.status.qosClass}'
+```
+
+**Resource Units:**
+- **CPU:** 
+  - 1 = 1 CPU core
+  - 1000m = 1 CPU
+  - 500m = 0.5 CPU
+- **Memory:**
+  - K, M, G, T, P, E (1000-based)
+  - Ki, Mi, Gi, Ti, Pi, Ei (1024-based)
+
+**Example: Resource Management**
+
+```yaml
+# resource-management.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: resource-demo
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: demo
+  template:
+    metadata:
+      labels:
+        app: demo
+    spec:
+      containers:
+      - name: app
+        image: nginx:1.21
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "250m"
+          limits:
+            memory: "128Mi"
+            cpu: "500m"
+      - name: sidecar
+        image: busybox:1.33
+        command: ['sh', '-c', 'while true; do sleep 30; done']
+        resources:
+          requests:
+            memory: "32Mi"
+            cpu: "100m"
+          limits:
+            memory: "64Mi"
+            cpu: "200m"
+```
+
+#### Pod Priority and Preemption
+
+**Priority:** Determines Pod importance
+**Preemption:** Higher priority Pods can evict lower priority Pods
+
+**Example: PriorityClass**
+
+```yaml
+# priority-classes.yaml
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority
+value: 1000000
+globalDefault: false
+description: "High priority for critical applications"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: medium-priority
+value: 100000
+globalDefault: false
+description: "Medium priority for standard applications"
+
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: low-priority
+value: 10000
+globalDefault: true
+description: "Low priority for batch jobs"
+```
+
+**Example: Pod with Priority**
+
+```yaml
+# high-priority-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: critical-app
+spec:
+  priorityClassName: high-priority
+  containers:
+  - name: app
+    image: nginx:1.21
+    resources:
+      requests:
+        memory: "1Gi"
+        cpu: "1"
+```
+
+```yaml
+# low-priority-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: batch-job
+spec:
+  priorityClassName: low-priority
+  containers:
+  - name: job
+    image: busybox:1.33
+    command: ['sh', '-c', 'sleep 3600']
+    resources:
+      requests:
+        memory: "500Mi"
+        cpu: "500m"
+```
+
+```bash
+# Create PriorityClasses
+kubectl apply -f priority-classes.yaml
+
+# List PriorityClasses
+kubectl get priorityclasses
+
+# Create low priority Pod first
+kubectl apply -f low-priority-pod.yaml
+
+# Create high priority Pod (may preempt low priority)
+kubectl apply -f high-priority-pod.yaml
+
+# Watch preemption
+kubectl get pods -w
+
+# Check Pod priority
+kubectl get pod critical-app -o jsonpath='{.spec.priority}'
+```
+
+**Example: Preventing Preemption**
+
+```yaml
+# non-preempting-priority.yaml
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata:
+  name: high-priority-non-preempting
+value: 1000000
+preemptionPolicy: Never
+globalDefault: false
+description: "High priority but won't preempt others"
+```
+
+**Pod Topology Spread Constraints:**
+
+```yaml
+# topology-spread.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: web-spread
+spec:
+  replicas: 6
+  selector:
+    matchLabels:
+      app: web
+  template:
+    metadata:
+      labels:
+        app: web
+    spec:
+      topologySpreadConstraints:
+      - maxSkew: 1
+        topologyKey: kubernetes.io/hostname
+        whenUnsatisfiable: DoNotSchedule
+        labelSelector:
+          matchLabels:
+            app: web
+      - maxSkew: 1
+        topologyKey: topology.kubernetes.io/zone
+        whenUnsatisfiable: ScheduleAnyway
+        labelSelector:
+          matchLabels:
+            app: web
+      containers:
+      - name: web
+        image: nginx:1.21
+```
+
+**Parameters:**
+- **maxSkew**: Maximum difference in Pod count
+- **topologyKey**: Node label key for topology domain
+- **whenUnsatisfiable**: DoNotSchedule or ScheduleAnyway
+- **labelSelector**: Identify Pods to spread
+
+```bash
+# Label nodes with zones
+kubectl label nodes node1 topology.kubernetes.io/zone=us-west-1a
+kubectl label nodes node2 topology.kubernetes.io/zone=us-west-1b
+kubectl label nodes node3 topology.kubernetes.io/zone=us-west-1c
+
+# Deploy with topology spread
+kubectl apply -f topology-spread.yaml
+
+# Check Pod distribution
+kubectl get pods -o wide -l app=web
+```
+
+---
+
+### 2. Cluster Administration
+
+#### Upgrading Kubernetes Clusters
+
+**Upgrade Strategy:**
+1. Upgrade control plane components
+2. Upgrade worker nodes
+3. Upgrade add-ons
+
+**Best Practices:**
+- Upgrade one minor version at a time
+- Test in staging environment first
+- Backup etcd before upgrade
+- Check component version compatibility
+
+**Example: Upgrade using kubeadm**
+
+```bash
+# Check current version
+kubectl version --short
+kubeadm version
+
+# View available versions
+sudo apt update
+sudo apt-cache madison kubeadm
+
+# Upgrade kubeadm (control plane)
+sudo apt-mark unhold kubeadm
+sudo apt-get update
+sudo apt-get install -y kubeadm=1.28.0-00
+sudo apt-mark hold kubeadm
+
+# Verify kubeadm version
+kubeadm version
+
+# Check upgrade plan
+sudo kubeadm upgrade plan
+
+# Perform upgrade (control plane)
+sudo kubeadm upgrade apply v1.28.0
+
+# Upgrade kubelet and kubectl
+sudo apt-mark unhold kubelet kubectl
+sudo apt-get update
+sudo apt-get install -y kubelet=1.28.0-00 kubectl=1.28.0-00
+sudo apt-mark hold kubelet kubectl
+
+# Restart kubelet
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+# Upgrade worker nodes (drain first)
+kubectl drain node1 --ignore-daemonsets
+
+# On worker node, upgrade
+sudo apt-mark unhold kubeadm
+sudo apt-get update
+sudo apt-get install -y kubeadm=1.28.0-00
+sudo apt-mark hold kubeadm
+
+sudo kubeadm upgrade node
+
+sudo apt-mark unhold kubelet kubectl
+sudo apt-get update
+sudo apt-get install -y kubelet=1.28.0-00 kubectl=1.28.0-00
+sudo apt-mark hold kubelet kubectl
+
+sudo systemctl daemon-reload
+sudo systemctl restart kubelet
+
+# Uncordon node
+kubectl uncordon node1
+
+# Verify cluster status
+kubectl get nodes
+kubectl version
+```
+
+#### Logging and Monitoring
+
+**Logging Architecture:**
+- **Node-level logging**: Container logs on nodes
+- **Cluster-level logging**: Centralized log aggregation
+- **Application-level logging**: App-specific logging
+
+**Monitoring Stack:**
+- **Metrics Server**: Basic resource metrics
+- **Prometheus**: Time-series metrics database
+- **Grafana**: Visualization and dashboards
+- **Alertmanager**: Alert handling
+
+**Example: Deploy Metrics Server**
+
+```bash
+# Deploy Metrics Server
+kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+
+# Verify Metrics Server
+kubectl get deployment metrics-server -n kube-system
+
+# View node metrics
+kubectl top nodes
+
+# View Pod metrics
+kubectl top pods -A
+
+# View Pod metrics in specific namespace
+kubectl top pods -n default
+
+# Sort by CPU
+kubectl top pods --sort-by=cpu
+
+# Sort by memory
+kubectl top pods --sort-by=memory
+```
+
+**Example: Deploy Prometheus and Grafana**
+
+```yaml
+# prometheus-deployment.yaml (simplified)
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: monitoring
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: prometheus-config
+  namespace: monitoring
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 15s
+    scrape_configs:
+    - job_name: 'kubernetes-pods'
+      kubernetes_sd_configs:
+      - role: pod
+      relabel_configs:
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_scrape]
+        action: keep
+        regex: true
+      - source_labels: [__meta_kubernetes_pod_annotation_prometheus_io_path]
+        action: replace
+        target_label: __metrics_path__
+        regex: (.+)
+      - source_labels: [__address__, __meta_kubernetes_pod_annotation_prometheus_io_port]
+        action: replace
+        regex: ([^:]+)(?::\d+)?;(\d+)
+        replacement: $1:$2
+        target_label: __address__
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: prometheus
+  template:
+    metadata:
+      labels:
+        app: prometheus
+    spec:
+      containers:
+      - name: prometheus
+        image: prom/prometheus:v2.40.0
+        ports:
+        - containerPort: 9090
+        volumeMounts:
+        - name: config
+          mountPath: /etc/prometheus
+        - name: storage
+          mountPath: /prometheus
+      volumes:
+      - name: config
+        configMap:
+          name: prometheus-config
+      - name: storage
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: prometheus
+  namespace: monitoring
+spec:
+  selector:
+    app: prometheus
+  ports:
+  - port: 9090
+    targetPort: 9090
+  type: ClusterIP
+```
+
+**Example: Logging with Fluentd**
+
+```yaml
+# fluentd-daemonset.yaml
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fluentd
+  namespace: kube-system
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: fluentd
+rules:
+- apiGroups:
+  - ""
+  resources:
+  - pods
+  - namespaces
+  verbs:
+  - get
+  - list
+  - watch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: fluentd
+roleRef:
+  kind: ClusterRole
+  name: fluentd
+  apiGroup: rbac.authorization.k8s.io
+subjects:
+- kind: ServiceAccount
+  name: fluentd
+  namespace: kube-system
+
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: fluentd
+  namespace: kube-system
+  labels:
+    app: fluentd
+spec:
+  selector:
+    matchLabels:
+      app: fluentd
+  template:
+    metadata:
+      labels:
+        app: fluentd
+    spec:
+      serviceAccountName: fluentd
+      containers:
+      - name: fluentd
+        image: fluent/fluentd-kubernetes-daemonset:v1-debian-elasticsearch
+        env:
+        - name: FLUENT_ELASTICSEARCH_HOST
+          value: "elasticsearch.logging.svc.cluster.local"
+        - name: FLUENT_ELASTICSEARCH_PORT
+          value: "9200"
+        volumeMounts:
+        - name: varlog
+          mountPath: /var/log
+        - name: varlibdockercontainers
+          mountPath: /var/lib/docker/containers
+          readOnly: true
+      volumes:
+      - name: varlog
+        hostPath:
+          path: /var/log
+      - name: varlibdockercontainers
+        hostPath:
+          path: /var/lib/docker/containers
+```
+
+```bash
+# View logs
+kubectl logs <pod-name>
+kubectl logs <pod-name> -c <container-name>
+kubectl logs -f <pod-name>  # Follow logs
+kubectl logs --previous <pod-name>  # Previous container instance
+kubectl logs <pod-name> --since=1h  # Last hour
+kubectl logs <pod-name> --tail=100  # Last 100 lines
+
+# Logs from multiple Pods
+kubectl logs -l app=nginx
+
+# Deploy logging stack
+kubectl apply -f fluentd-daemonset.yaml
+```
+
+
